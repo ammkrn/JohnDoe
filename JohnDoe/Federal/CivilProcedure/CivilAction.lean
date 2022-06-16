@@ -1,4 +1,5 @@
 import Mathlib.Data.Option.Basic
+import Mathlib.Init.Algebra.Order
 import UsCourts.Defs
 import UsCourts.Federal.Defs
 import Timelib.Date.Basic
@@ -12,12 +13,23 @@ import JohnDoe.Federal.CivilProcedure.Diversity
 import JohnDoe.Federal.CivilProcedure.Pleading.Claim
 import JohnDoe.Federal.CivilProcedure.Pleading.Complaint
 import JohnDoe.Federal.CivilProcedure.Pleading.Service
+import JohnDoe.Federal.CivilProcedure.Motion
+import JohnDoe.Federal.CivilProcedure.Deadline
 
-open Std (HashMap)
+open Std (HashMap RBTree)
 
+
+/-
+The transition has to go from 
+complaintFiled to summonsesIssued,
+such that issueSummonses is the only available step
+after filing the complaint; or you can do request waiver I guess.
+-/
 inductive Status
-| complaintUnfiled
+/- An action is -/
+| uninitiated
 | complaintFiled
+| summonsesIssued
 | serviceWaiverSent
 | servedOrWaived
 | answered
@@ -28,6 +40,7 @@ inductive Status
 | enforcementComplete
 | dismissedWithoutPrejudice
 | dismissedWithPrejudice
+| dismissed
 | transferred
 | remanded
 | settled
@@ -38,6 +51,9 @@ instance : LT Status := ltOfOrd
 instance (t₁ t₂ : Status) : Decidable (t₁ <= t₂) := inferInstance
 instance (t₁ t₂ : Status) : Decidable (t₁ < t₂) := inferInstance
 
+@[simp]
+theorem Status.lt_irrefl (s : Status) : ¬s < s := sorry
+
 abbrev Status.pleading (s : Status) := s < pleadingsClosed
 abbrev Status.pretrial (s : Status) := pleadingsClosed <= s ∧ s < pretrialClosed
 abbrev Status.trial (s : Status) := pretrialClosed <= s ∧ s < finalJudgmentEntered
@@ -45,72 +61,100 @@ abbrev Status.appeal (s : Status) := finalJudgmentEntered <= s ∧ s < appealClo
 abbrev Status.enforcement (s : Status) := finalJudgmentEntered <= s ∧ s < enforcementComplete
 
 inductive MeansOfJoinder where
-| original
+| complaint
 -- Required joinder of parties.
 | rule14
 | rule18
-| rule19
+| rule19 (joinderSpoilsVenue : Bool)
 | rule20
 -- intervention
 | rule24
 deriving DecidableEq, Hashable, Repr
 
+inductive PartyStatus_ 
+| notServed
+| dismissed
+| servedOn
+| waivedOn
+deriving DecidableEq, Hashable, Repr
+
+structure PartyStatus where
+  meansOfJoinder : MeansOfJoinder
+  status : PartyStatus_
+deriving DecidableEq, Hashable, Repr
+
+inductive ComplaintServiceStatus
+| served : Summons → ComplaintServiceStatus
+| waived : ServiceWaiverResponse → ComplaintServiceStatus
+| extended 
+| stock 
+| dismissed
+deriving Repr
+
+structure ComplaintServiceMap (parties :  HashMap Party PartyStatus) (c : FiledComplaint) where
+  map : HashMap Party ComplaintServiceStatus
+
 structure CivilAction where
-  i : DiversityInterpretation
   status : Status
-  parties : HashMap Party MeansOfJoinder
-  claims : List Claim
-  complaint : Complaint i
+  venue : District
+  dateTime : NaiveDateTime
+  parties : HashMap Party PartyStatus
+  complaint : FiledComplaint
   summonses : List Summons
+  serviceWaiverResponses : List ServiceWaiverResponse
+  claims : List Claim
+  removedByDefendant : Bool
+  motionsPending : List Motion
+  motionsGranted : List Motion
+  motionsDenied : List Motion
+  upcomingDeadlines : List (FrcpPeriod venue)
+  /-
+  Need this for e.g. rule 71.1 service of process; special proceeding for condemnation by eminent domain.
+  APPLICABILITY OF OTHER RULES. These rules govern proceed-
+  ings to condemn real and personal property by eminent domain,
+  except as this rule provides otherwise.
+  -/
+  isSpecialProceeding : Bool
+
+
+def CivilAction.empty (venue : District) : CivilAction := 
+sorry
+--{
+--  status := .uninitiated
+--  venue
+--  dateTime := Inhabited.default
+--  parties := ∅ 
+--  complaint := Inhabited.default
+--  summonses := []
+--  serviceWaiverResponses := []
+--  claims := []
+--  removedByDefendant := false
+--  motionsPending := []
+--  motionsGranted := []
+--  motionsDenied := []
+--  upcomingDeadlines := []
+--}
 
 @[reducible]
-def CivilAction.isNew (action : CivilAction) : Prop :=
-  action.status = .complaintUnfiled
-  ∧ action.parties = HashMap.empty
-  ∧ action.claims = []
-  ∧ action.summonses = []
+def CivilAction.partyStatus (action : CivilAction) (party : Party) : Option PartyStatus :=
+  action.parties.find? party
 
-def CivilAction.plaintiffs (s : CivilAction) : List Party :=
-  (s.claims.bind Claim.plaintiffs).dedup
+@[reducible]
+def CivilAction.dismissedOrRemanded (action : CivilAction) : Prop :=
+  match action.status with
+  | .dismissedWithoutPrejudice | .dismissedWithPrejudice | .remanded => True
+  | _ => False
 
-def CivilAction.defendants (s : CivilAction) : List Party :=
-  (s.claims.bind Claim.defendants).dedup
 
---def CivilAction.joinDefendantToClaim
---  (s : CivilAction)
---  (d : Party)
---  (c : Claim)
---  (means : MeansOfJoinder)
---  (h0 : c ∈ s.claims := by decide)
---  (h1 : (s.parties.find? d).isNone := by decide)
---  (h2 : means ≠ .rule20 := by decide)
---  : CivilAction :=
---  {
---    s with
---    claims := s.claims.replace c { c with defendants := d :: c.defendants }
---    parties :=  s.parties.insert d means
---  }
+@[reducible]
+def CivilAction.servedOrWaived (action : CivilAction) (p : Party) : Prop :=
+  (∃ su ∈ action.summonses, su.servedParty = p)
+  ∨ (∃ waiver ∈ action.serviceWaiverResponses, waiver.servedParty = p)
 
-def CivilAction.joinClaim 
-  (s : CivilAction) 
-  (c : Claim) 
-  (h0 : ¬c ∈ s.claims := by decide) : CivilAction :=
-  --let pMeans := 
-  let withPlaintiff := 
-    if (s.parties.find? c.namedPlaintiff).isSome 
-    then s.parties
-    else s.parties.insert c.namedPlaintiff .rule20
-  let defendantsInClaimNotYetJoined := c.defendants.filter (fun d => (s.parties.find? d).isNone)
-  let withDefendants :=
-    defendantsInClaimNotYetJoined.foldl (fun sink next => sink.insert next .rule20) withPlaintiff
+
+@[reducible]
+def CivilAction.dismissAgainstDefendant (action : CivilAction) (d : Party) (withPrejudice : Bool) : CivilAction :=
   {
-    s with
-    claims := c :: s.claims
-    /- If this plaintiff isn't already in the mix, join them via 20a1. -/
-    parties := withDefendants
+    action with
+    claims := action.claims.filter (fun c => c.defendant != d)
   }
-
-def CivilAction.joinRequired (s : CivilAction) (party : Party) (h : ¬s.parties.contains party := by decide) :=
-  { s with parties := s.parties.insert party .rule19 }
-
-

@@ -1,17 +1,16 @@
 import Lake
 open Lake DSL
 
-package JohnDoe {
-  -- add configuration options here
-  dependencies := #[
-    {
-      name := `UsCourts
-      src := Source.path "/Users/ammkrn_/UsCourts"
-    },
-    {
-      name := `mathlib
-      src := Source.git "https://github.com/leanprover-community/mathlib4.git" "master"
-    }
-  ]
-  defaultFacet := PackageFacet.staticLib
-}
+package JohnDoe
+
+@[defaultTarget]
+lean_lib JohnDoe
+
+require mathlib from git
+  "https://github.com/leanprover-community/mathlib4.git"@"master"
+
+require UsCourts from git
+  "https://github.com/ammkrn/UsCourts.git"@"master"
+
+--require UsCourts from ".."/"UsCourts"
+--require mathlib from ".."/"Mathlib4"

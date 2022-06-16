@@ -16,21 +16,25 @@ deriving DecidableEq, Hashable, Repr
 inductive JurisdictionalGrant
 | federalQuestion
 | foreignState
--- United States as plaintiff
+-- US as plaintiff
 | s1345
 -- Banking association as party 
 | s1348
 -- Multiparty, multiforum jurisdiction
 | s1369
 | diversity
-| supplemental
+-- s1441
+| diversityRemoval
+| federalQuestionRemoval
+| supplemental (supplementing : JurisdictionalGrant)
+| supplemental'
 | scOriginal
 deriving DecidableEq, Hashable, Repr
 
 @[reducible]
 def JurisdictionalGrant.federalSjm : JurisdictionalGrant → Prop
 | diversity => False
-| supplemental => False
+| supplemental _ => False
 | _ => True
 
 structure AttorneyInfo where
@@ -41,80 +45,52 @@ structure AttorneyInfo where
   telephoneNumber : String
 deriving DecidableEq, Hashable, Repr
 
+inductive ClaimKind
+| direct
+| cross
+| counter
+| thirdParty
+deriving DecidableEq, Hashable, Repr
+
 structure Claim where
-  namedPlaintiff : Party
-  namedDefendant : Party
-  plaintiffs : List Party
-  defendants : List Party
-  reliefRequested : List Relief
+  probateOrFamilyCase : Bool
+  kind : ClaimKind
+  description : String
+  /-
+  For keeping track of which claims represent "alternative claims"
+  as in FRCP 18(a)
+  -/
+  altGroup : Option Nat
+  plaintiff : Party
+  defendant : Party
+  reliefAmount : Nat
+  reliefDescription : String
   causeOfAction : String
-  explanation : List String
-  defendantsSubjectToPersonalJurisdictionIn : List District
+  defendantSubjectToPersonalJurisdictionIn : List District
   substantialPartDistricts : List District
+  isFederalClaim : Bool
   realPropertyInvolvedInAction : Bool
   againstOfficerOrEmployeeOfTheUs : Bool
-  jurisdiction : JurisdictionalGrant
-  hp : namedPlaintiff ∈ plaintiffs := by decide
-  hd : namedDefendant ∈ defendants := by decide
 deriving DecidableEq, Hashable, Repr
 
 @[reducible]
-def allAmountsInControversy (claims : List Claim) : HashMap (Party × Party) Nat := 
-  (claims.bind Claim.reliefRequested).foldl (init := HashMap.empty)
-    (fun sink relief =>
-      sink.insert (relief.p, relief.d) ((sink.find? (relief.p, relief.d)).getD 0))
+def sortClaimsByDescription (claims : List Claim) : HashMap String (List Claim) :=
+  claims.foldl (init := HashMap.empty)
+  fun sink next => 
+    match sink.find? next.description with
+    | none => sink.insert next.description [next]
+    | some l => sink.insert next.description (next :: l)
   
 @[reducible]
-def groupOfDiversityClaimsOk (i : DiversityInterpretation) (claims : List Claim) : Prop :=
-  let pairsGtThreshold := 
-    (allAmountsInControversy claims).toList.filterMap
-      (fun ⟨pd, amt⟩ => if amt > 75000 then some pd else none)
-  (∀ c ∈ claims, ∃ p ∈ c.plaintiffs, (∀ d ∈ c.defendants, (p, d) ∈ pairsGtThreshold))
-  ∧ i.test1332 (claims.bind Claim.plaintiffs) (claims.bind Claim.defendants)
-
+abbrev Claim.defendantResidencies (c : Claim) : List District :=
+  HasResidency.residencyAsDefendant c.defendant
 
 @[reducible]
-def diversityIntact (claims : List Claim) : Prop := 
-  let ps := (claims.bind (Claim.plaintiffs)).map HasDiversityCitizenship.diversityCitizenship
-  let ds := (claims.bind (Claim.defendants)).map HasDiversityCitizenship.diversityCitizenship
-  DiversityCitizenship.completeDiversity ps ds
+abbrev Claim.plaintiffResidencies (c : Claim) : List District :=
+  HasResidency.residencyAsPlaintiff c.plaintiff
 
 @[reducible]
-def initialJurisdictionsOk (i : DiversityInterpretation) (claims : List Claim) : Prop :=
-  let diversityClaims := claims.filter fun x => x.jurisdiction = .diversity
-  let diversityOk := 
-    diversityClaims.isEmpty ∨ (groupOfDiversityClaimsOk i diversityClaims ∧ diversityIntact claims)
-  (∃ c ∈ claims, c.jurisdiction ≠ .supplemental) ∧ diversityOk
-
-@[reducible]
-def Claim.foreignStateDefendant (c : Claim) : Prop :=
-  c.defendants.any
-    fun
-    | .foreignState _ => True
-    | _ => False
-
-@[reducible]
-def Claim.foreignStateDefendantVenues (c : Claim) : List District := Id.run do
-  let mut venues := []
-  for d in c.defendants do
-    match d with
-    | .foreignState f =>
-      venues := venues ++ f.districts_f2 ++ f.districts_f3
-      continue
-    | _ => continue
-  venues
-
-@[reducible]
-def Claim.defendantResidencies (c : Claim) : List District :=
-  c.defendants.bind HasResidency.residencyAsDefendant
-
-@[reducible]
-def Claim.allDefendantsResideInSameState (c : Claim) : Prop :=
-  match c.defendantResidencies with
-  | [] => False
-  | h :: t =>
-    ∀ l ∈ c.defendants.map HasResidency.residencyAsDefendant,
-      (∃ x ∈ l, x.stateOrTerritory = h.stateOrTerritory)
-
-instance (c : Claim) : Decidable (c.allDefendantsResideInSameState) := by
-  simp [Claim.allDefendantsResideInSameState]; split <;> exact inferInstance
+def Claim.againstForeignStateDefendant (c : Claim) : Prop :=
+  match c.defendant with
+  | .foreignState _ => True
+  | _ => False

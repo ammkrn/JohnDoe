@@ -33,6 +33,28 @@ structure NaturalPerson where
   foreignCitizenships : List String
 deriving DecidableEq, Hashable, Repr
 
+instance thirdCircuitSwiger : HasDiversityCitizenship NaturalPerson where
+  diversityCitizenship p :=
+    {
+      name := p.name
+      nameIsFictitious := p.nameIsFictitious
+      stateCitizenships :=
+        match p.isUsCitizen, p.domicile with
+        | true, some s => [s.stateOrTerritory]
+        | _, _ => []
+      foreignCitizenships := 
+        if p.isUsCitizen then [] else p.foreignCitizenships
+      permanentResidentDomiciledIn := 
+        if p.isForeignPermanentResident 
+        then p.domicile.map District.stateOrTerritory 
+        else none
+      isStatelessUsCitizen := p.isUsCitizen ∧ p.domicile.isNone
+      isForeignState := false
+      h0 := sorry
+      h1 := sorry
+      h2 := sorry
+    }
+
 instance : HasDiversityCitizenship NaturalPerson where
   diversityCitizenship p :=
     {
@@ -53,6 +75,7 @@ instance : HasDiversityCitizenship NaturalPerson where
       h1 := sorry
       h2 := sorry
     }
+
 
 instance : HasResidency NaturalPerson := 
   let residencyAsPlaintiff := fun (p : NaturalPerson) =>
@@ -195,6 +218,11 @@ inductive Party
 --| unitedStates (u : UnitedStates)
 deriving DecidableEq, Hashable, Repr
 
+@[reducible]
+def Party.foreignService (p : Party) : Prop :=
+  sorry
+instance : DecidablePred Party.foreignService := sorry
+
 def Party.name : Party → String
 | naturalPerson p => p.name
 | corporation p => p.name
@@ -234,3 +262,8 @@ instance : HasResidency Party where
     --| .inRem c => []
     --| .state c => []
     --| .unitedStates c => []
+
+class Party' (A : Type) [DecidableEq A] [Hashable A] [Repr A] where
+  name : A → String
+  venueResidency : A → List District
+  diversityCitizenship : A → DiversityCitizenship

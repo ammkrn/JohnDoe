@@ -1,6 +1,5 @@
 import Mathlib.Data.List.Basic
 import Mathlib.Init.Data.List.Instances
-import Mathlib.Tactic.SolveByElim
 import Mathlib.Logic.Basic
 import UsCourts.Defs
 import UsCourts.Federal.Defs
@@ -18,12 +17,21 @@ structure DiversityCitizenship where
   permanentResidentDomiciledIn : Option StateOrTerritoryTag
   isStatelessUsCitizen : Bool
   isForeignState : Bool
+  /-
+  Must be one and only one of
+  1) stateless
+  2) a foreign state
+  3) a permanent resident, citizen of a state, or foreign citizen
+  -/
   h0 : 
     (isStatelessUsCitizen.xor isForeignState).xor 
     (!stateCitizenships.isEmpty || !foreignCitizenships.isEmpty || permanentResidentDomiciledIn.isSome) := by decide
+  /- Can't be a citizen of a state and be stateless. -/
   h1 : (!stateCitizenships.isEmpty).nand isStatelessUsCitizen := by decide
+  /- Can't be a citizen of a state and be a permanent resident. -/
   h2 : (!stateCitizenships.isEmpty).nand permanentResidentDomiciledIn.isSome := by decide
 deriving DecidableEq, Hashable, Repr
+
 
 class HasDiversityCitizenship (A : Type u) where
   diversityCitizenship : A → DiversityCitizenship
@@ -42,20 +50,26 @@ def DiversityCitizenship.allStates (p : DiversityCitizenship) : List StateOrTerr
 def completeDiversity1 (p₁ p₂ : DiversityCitizenship) : Prop :=
   ∀ pr ∈ (p₁.allStates.product p₂.allStates), pr.fst ≠ pr.snd
 
+
 @[reducible]
 def DiversityCitizenship.completeDiversity (ps ds : List DiversityCitizenship) :=
-  ∀ pr ∈ ps.product ds, completeDiversity1 pr.fst pr.snd
+  let anyStatelessUsCitizens := ∃ x ∈ (ps ++ ds), x.isStatelessUsCitizen
+  (∀ pr ∈ ps.product ds, completeDiversity1 pr.fst pr.snd) ∧ ¬anyStatelessUsCitizens
 
 @[reducible]
 def DiversityCitizenship.isNoncitizen (p : DiversityCitizenship) : Prop :=
   p.stateCitizenships.isEmpty ∧ ¬p.isStatelessUsCitizen
 
 structure DiversityInterpretation where
+  identifier : String
   isCitizenOfAState : DiversityCitizenship → Prop
   isForeignCitizenOrSubject : DiversityCitizenship → Prop
   inst1 : DecidablePred isCitizenOfAState
   inst2 : DecidablePred isForeignCitizenOrSubject
 
+instance : Repr DiversityInterpretation where
+  reprPrec x n := x.identifier
+  
 instance {i : DiversityInterpretation} : DecidablePred (i.isCitizenOfAState) := i.inst1
 instance {i : DiversityInterpretation} : DecidablePred (i.isForeignCitizenOrSubject) := i.inst2
 
@@ -94,6 +108,7 @@ def DiversityInterpretation.«a1_4»
   (ps ds : List DiversityCitizenship) : Prop :=
   i.a1 ps ds ∨ i.a2 ps ds ∨ i.a3 ps ds ∨ i.a4 ps ds
 
+
 @[reducible]
 def DiversityInterpretation.test1332Inner 
   (i : DiversityInterpretation) 
@@ -131,8 +146,32 @@ instance
   (ds : List B) : Decidable (i.test1332 ps ds) := 
   inferInstance
 
+@[reducible]
+def DiversityInterpretation.test1332'
+  (i : DiversityInterpretation) 
+  (ps ds : List DiversityCitizenship) : Option String :=
+
+  let base := 
+    (DiversityCitizenship.completeDiversity ps ds)
+    ∧ ¬(∀ p ∈ ps, p.isNoncitizen ∧ ∀ d ∈ ds, d.isNoncitizen)
+    ∧ (¬ps.isEmpty ∧ ¬ds.isEmpty)
+  let cite : Nat → String := fun n => s!"28 U.S.C. § 1332(a)({n})"
+  if base 
+  then
+    if i.a1 ps ds 
+      then some <| cite 1 
+    else if i.a2 ps ds 
+      then some <| cite 2
+    else if i.a3 ps ds 
+      then some <| cite 3
+    else if i.a4 ps ds
+      then some <| cite 4
+    else none
+  else none
+
 def conservative : DiversityInterpretation := {
   /- Allows only US citizens domiciled in a state; No dual citizenship, no permanent residents -/
+  identifier := "Conservative"
   isCitizenOfAState := 
     fun p => 
       ¬p.stateCitizenships.isEmpty 
@@ -149,6 +188,7 @@ def conservative : DiversityInterpretation := {
 
 def interp1 : DiversityInterpretation := {
   /- Considers anyone (even dual citizens) domiciled in a US state to be a "citizen of a state" -/
+  identifier := "Interp1"
   isCitizenOfAState := fun p => 
     ¬p.stateCitizenships.isEmpty
   isForeignCitizenOrSubject := fun p => 
@@ -156,6 +196,7 @@ def interp1 : DiversityInterpretation := {
   inst1 := inferInstance
   inst2 := inferInstance
 }
+
 
 structure LawfulDiversityInterpretation extends DiversityInterpretation where
   hr1 (a b : DiversityCitizenship) : 
@@ -174,4 +215,6 @@ structure LawfulDiversityInterpretation extends DiversityInterpretation where
     (hx : ∀ x ∈ xs, x.isNoncitizen) 
     (hy : ∀ y ∈ ys, y.isNoncitizen) 
     : ¬toDiversityInterpretation.a1_4 xs ys
+
+
 

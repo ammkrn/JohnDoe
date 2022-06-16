@@ -44,10 +44,18 @@ inductive ServiceKind
 | condemnation -- AKA «71.1d3a» 
 deriving DecidableEq, Hashable, Repr
 
-structure ServiceWaiverRequest (i : DiversityInterpretation) where
-  complaint : Complaint i
-  h : complaint.isFiled
+@[reducible]
+def ServiceKind.exemptFrom90DayRule : ServiceKind → Prop 
+| f1 | f2A | f2B | f2Ci | f2Cii => True
+| h2 => True
+| j1 => True
+| condemnation => True
+| _ => False
+
+structure ServiceWaiverRequest where
+  complaint : FiledComplaint
   /- Defendant (or recipient if different) -/
+  servedParty : Party
   recipient : String
   defendantIsInUsJudicialDistrict : Bool
   originationDate : ScalarDate
@@ -60,13 +68,12 @@ deriving Repr
 def ServiceWaiverRequest.formNumber : String := "AO 398"
 
 section Service
-variable {i : DiversityInterpretation} 
 
-instance : ToString (ServiceWaiverRequest i) where
+instance : ToString ServiceWaiverRequest where
   toString request :=
-    s!"UNITED STATES DISTRICT COURT FOR THE {request.complaint.district.fullName}\n"++
+    s!"UNITED STATES DISTRICT COURT FOR THE {request.complaint.venue.fullName}\n"++
     s!"Civil Action No. {request.complaint.caseNum}\n\n"++
-    s!"To {request.recipient}:\n" ++
+    s!"To: {request.recipient}:\n" ++
     "Why are you getting this?\n" ++
     "A lawsuit has been filed against you, or the entity you represent, in this court under the number shown above. A copy of the complaint is attached.\n" ++
     s!"This is not a summons, or an official notice from the court. It is a request that, to avoid expenses, you waive formal service of a summons by signing and returning the enclosed waiver. To avoid these expenses, you must return the signed waiver within {if request.defendantIsInUsJudicialDistrict then 30 else 60} days from the date shown below, which is the date this notice was sent. Two copies of the waiver form are enclosed, along with a stamped, self-addressed envelope or other prepaid means for returning one copy. You may keep the other copy.\n" ++
@@ -82,7 +89,7 @@ instance : ToString (ServiceWaiverRequest i) where
     s!"{request.phone}"
 
 structure ServiceWaiverResponse where
-  request : ServiceWaiverRequest i
+  request : ServiceWaiverRequest
   date : ScalarDate
   defendantOrAttorneyName : String
   address : String
@@ -90,13 +97,15 @@ structure ServiceWaiverResponse where
   phone : String
 deriving Repr
 
+def ServiceWaiverResponse.servedParty (r : ServiceWaiverResponse) : Party :=  r.request.servedParty
+
 def ServiceWaiverResponse.formNumber : String := "AO 399"
 
-instance : ToString (@ServiceWaiverResponse i) where
+instance : ToString ServiceWaiverResponse where
   toString response := 
-    s!"UNITED STATES DISTRICT COURT FOR THE {response.request.complaint.district.fullName}\n"++
+    s!"UNITED STATES DISTRICT COURT FOR THE {response.request.complaint.venue.fullName}\n"++
     s!"Civil Action No. {response.request.complaint.caseNum}\n\n"++
-    s!"To {response.request.complaint.namedPlaintiff.name}:\n" ++
+    s!"To: {response.request.complaint.namedPlaintiff.name}:\n" ++
     s!"I have received your request to waive service of a summons in this action along with a copy of the complaint, two copies of this waiver form, and a prepaid means of returning one signed copy of the form to you.\n" ++
     s!"I, or the entity I represent, agree to save the expense of serving a summons and complaint in this case.\n" ++
     s!"I understand that I, or the entity I represent, will keep all defenses or objections to the lawsuit, the court’s jurisdiction, and the venue of the action, but that I waive any objections to the absence of a summons or of service.\n" ++
@@ -114,9 +123,52 @@ inductive ServiceTimeLimit
 
 structure Summons where
   complaint : FiledComplaint
-  defendant : PartyInfo
-  appearanceWindow : ScalarDate × ScalarDate
-  defaultWarning : String
+  servedParty : Party
+  --defendant : PartyInfo
+  --appearanceWindow : ScalarDate × ScalarDate
+  plaintiffOrPlaintiffsAttorneyName : String
+  address : String
+  email : String
+  phone : String
+deriving Repr
+
+def Summons.formNumber : String := "AO 440 (Rev. 06/12) Summons in a Civil Action"
+def Summons.defaultWarning := "If you fail to respond, judgment by default will be entered against you for the relief demanded in the complaint. You also must file your answer or motion with the court."
+
+instance : ToString Summons where
+  toString summons := 
+    sorry
+    --s!"UNITED STATES DISTRICT COURT FOR THE {summons.complaint.district.fullName}\n"++
+    --s!"Civil Action No. {summons.complaint.caseNum}\n\n"++
+    --s!"{summons.complaint.plaintiffs} v. {summons.complaint.defendants}" ++
+    --s!"To: {summons.defendant}:\n" ++
+    --s!"A lawsuit has been filed against you." ++
+    --s!"Within 21 days after service of this summons on you (not counting the day you received it) — or 60 days if you" ++
+    --s!"are the United States or a United States agency, or an officer or employee of the United States described in Fed. R. Civ." ++
+    --s!"P. 12 (a)(2) or (3) — you must serve on the plaintiff an answer to the attached complaint or a motion under Rule 12 of" ++
+    --s!"the Federal Rules of Civil Procedure. The answer or motion must be served on the plaintiff or plaintiff’s attorney," ++
+    --s!"whose name and address are: {summons.plaintiffOrPlaintiffsAttorneyName}, {summons.address}, {summons.email}, {summons.phone}" ++
+    --Summons.defaultWarning
+    --s!"Date: {reprStr response.date}\n" ++
+    --s!"{response.defendantOrAttorneyName}\n" ++
+    --s!"{response.address}\n" ++
+    --s!"{response.email}\n" ++
+    --s!"{response.phone}"
 
 end Service
+
+--Rule 4. Summons
+--(a) CONTENTS; AMENDMENTS.
+--(1) Contents. A summons must:
+--(A) name the court and the parties;
+--(B) be directed to the defendant;
+--(C) state the name and address of the plaintiff’s attorney
+--or—if unrepresented—of the plaintiff;
+--(D) state the time within which the defendant must ap-
+--pear and defend;
+--(E) notify the defendant that a failure to appear and de-
+--fend will result in a default judgment against the defend-
+--ant for the relief demanded in the complaint;
+--(F) be signed by the clerk; and
+--(G) bear the court’s seal.
 
