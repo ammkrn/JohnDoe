@@ -3,7 +3,6 @@ import UsCourts.Defs
 import UsCourts.Federal.Defs
 import Timelib.Date.Basic
 import Timelib.Date.ScalarDate
-import Timelib.NanoPrecision.DateTime.NaiveDateTime
 import Timelib.NanoPrecision.DateTime.DateTime
 import Timelib.NanoPrecision.Duration.SignedDuration
 import JohnDoe.Util
@@ -14,311 +13,173 @@ import JohnDoe.Federal.CivilProcedure.Pleading.Complaint
 import JohnDoe.Federal.CivilProcedure.Pleading.Service
 import JohnDoe.Federal.CivilProcedure.Pleading.Answer
 import JohnDoe.Federal.CivilProcedure.Motion
-import JohnDoe.Federal.CivilProcedure.Deadline
+import JohnDoe.Federal.CivilProcedure.Period
 import JohnDoe.Federal.CivilProcedure.CivilAction
 
-open Std (HashMap)
+open Std (HashMap AssocList)
 
 set_option autoImplicit false
 
-structure SjmCheck where
-  identifier : String
-  check : CivilAction → Prop
-  inst : DecidablePred check 
+structure Document where
+  contents : String
+  dateTime : TaiDateTime
+deriving Repr
 
-instance : Repr SjmCheck := ⟨fun x => reprPrec x.identifier⟩
-instance (ck : SjmCheck) : DecidablePred ck.check := ck.inst
+structure Store where
+  documents : List Document
+  status : Status
+  dateTime : TaiDateTime
+  venue : District
+  parties : HashMap Party PartyStatus
+  claims : List Claim
+  complaint : FiledComplaint
+  removedByDefendant : Bool
+  motions : List Motion
+  summonses : Unit
+
+structure ComInfo where
+  dateTime : TaiDateTime
+  label : String
+  document : Option (String × TaiDateTime)
+
+structure DCom extends ComInfo where
+  -- Must be true before `f` can be executed.
+  pre : Store → Prop
+  f : ∀ (store : Store), pre store → Store
+  -- Must be true after `f` for `EvalR`.
+  post : Store → Prop
+
+inductive BinTree
+| leaf (com : DCom)
+| node (l r : BinTree) 
+
+inductive EvalR : BinTree → Store → Store → Prop
+| leaf 
+  (com : DCom)
+  (store store' : Store)
+  (hPre : com.pre store)
+  (hPost : com.post store') 
+  (h : com.f store hPre = store') : 
+    EvalR (.leaf com) store store'
+| node 
+  (l r : BinTree)
+  (store₀ store₁ store₂ : Store)
+  (hL : EvalR l store₀ store₁)
+  (hR : EvalR r store₁ store₂) 
+  (hTimeMonoL : store₀.dateTime <= store₁.dateTime)
+  (hTImeMonoR : store₁.dateTime <= store₂.dateTime) : 
+    EvalR (.node l r) store₀ store₂ 
 
 @[reducible]
-def trueSjmCheck : SjmCheck := {
-  identifier := "true"
-  check := fun _ => True
-  inst := inferInstance
+def BinTree.pre : BinTree → (Store → Prop)
+| leaf com => com.pre
+| node l _ => l.pre
+
+@[reducible]
+def BinTree.post : BinTree → (Store → Prop)
+| leaf com => com.post
+| node _ r => r.post
+
+/-
+if `EvalR t s s'`, then the precondition is true of s
+-/
+theorem EvalRPre 
+  (t : BinTree) 
+  (store store' : Store) 
+  (h : EvalR t store store') : t.pre store := by
+  cases h with
+  | leaf c s s' hPre h hpost => 
+    simp [BinTree.pre]
+    exact hPre
+  | node l r s0 s1 s2 h0 h1 => 
+    simp [BinTree.pre]
+    exact EvalRPre l store s1 h0
+
+/-
+If (EvalR t s s'), then t's post-condition is true of s'.
+-/
+theorem EvalRPost 
+  (t : BinTree) 
+  (store store' : Store) 
+  (h : EvalR t store store') : t.post store' := by
+  cases h with
+  | leaf c s s' hpre h hpost => simp [BinTree.post]; assumption
+  | node l r s0 s1 s2 h0 h1 => exact EvalRPost r s1 store' h1
+
+theorem evalDeterministic : 
+  ∀ (pgm : BinTree) 
+    (store storeA : Store),
+    EvalR pgm store storeA 
+    → (∀ storeB : Store, EvalR pgm store storeB → storeA = storeB) 
+| (.leaf com), s, storeA, EvalR.leaf _ _ _ _ _ f, sB, EvalR.leaf _ _ _ _ _ i => by rw [← f, ← i]
+| (.node l r), s, storeA, EvalR.node _ _ _ s1 _ P Q _ _, storeB, EvalR.node _ _ _ s1' _ T U _ _ =>
+  have ihl := evalDeterministic l s s1 P s1' T
+  evalDeterministic r s1 storeA Q storeB (ihl ▸ U)
+
+-- S₀ ⊆ S
+def Complaint.file (complaint : Complaint) : ∀ (filedOn : TaiDateTime) (caseNum : Nat), Store
+| filedOn, caseNum =>
+  {
+    status := .complaintFiled
+    venue := complaint.venue
+    dateTime := filedOn
+    parties := sorry
+    complaint := {
+      complaint with
+      header := sorry
+      filedOn
+      h := sorry
+    }
+    claims := complaint.claims
+    removedByDefendant := false
+    motions := []
+    summonses := ()
+    documents := [
+      --(Document.mk (contents := complaint.text) (dateTime := filedOn))
+    ]
 }
 
+theorem inversionLeaf (com : DCom) (store store' : Store) :
+  EvalR (.leaf com) store store' ↔ (∃ hPre, com.f store hPre = store' ∧ com.post store') := by
+  refine Iff.intro ?mp ?mpr
+  case mp =>
+    intro h; 
+    cases h with
+    | leaf _ _ _ a4 a5 a6 =>
+      exact Exists.intro a4 (And.intro a6 a5)
+  case mpr =>
+    intro h
+    cases h with
+    | intro w p =>
+      exact EvalR.leaf com store store' w p.right p.left
 
-inductive RuleTag
-| fileComplaint
-| serveProcess
-| waiveService
-| extendSummonsDeadline
-| dismissParty
---| fileAnswer
---| fileReply
---| rule12Motion
---| fileMotion
+theorem inversionNode (l r : BinTree) (store store' : Store) :
+  EvalR (.node l r) store store' ↔ (∃ store_x, EvalR l store store_x ∧ EvalR r store_x store' ∧ store.dateTime <= store_x.dateTime ∧ store_x.dateTime <= store'.dateTime) :=  by
+  refine Iff.intro ?mp ?mpr
+  case mp =>
+    intro h;
+    cases h with
+    | node a1 a2 a3 store_x a5 a6 a7 a8 =>
+      refine Exists.intro store_x ?r
+      refine And.intro a6 ?r0
+      refine And.intro a7 ?r1
+      refine And.intro a8 ?r2
+      assumption
+  case mpr =>
+    intro h
+    cases h with
+    | intro w p =>
+      apply EvalR.node l r store w store'
+      exact p.left
+      exact p.right.left
+      exact p.right.right.left
+      exact p.right.right.right
 
-structure FileComplaint where
-  complaint : Complaint
-  filedOn : NaiveDateTime
-  header : PleadingHeader
-  h : header.pleadingDesignation = .complaint := by decide
-deriving Repr
+def validInitialStates : Set Store :=
+    { store | ∃ (complaint : Complaint) (filedOn : TaiDateTime) (caseNum : Nat), store = complaint.file filedOn caseNum }
 
-structure DismissParty where
-  dateTime : NaiveDateTime
-  party : Party
+def EvalRBinary : Store → Store → Prop := fun s s' => ∃ (c : BinTree), EvalR c s s'
 
-structure ExtendSummonsDeadline where
-  dateTime : NaiveDateTime
-  defendant : Party
-  goodReason : Option String
-  extension : Option Bool
-  
-structure ServeProcess where
-  dateTime : NaiveDateTime
-  summons : Summons
-  kind : ServiceKind
-deriving Repr
+def RTC : {α : Type _} → (α → α → Prop) → α → α → Prop := sorry
 
-structure WaiveService where
-  dateTime : NaiveDateTime
-  waiver : ServiceWaiverResponse
-deriving Repr
-
-structure FileAnswer where
-  dateTime : NaiveDateTime
-  answer : Answer
-
-/- Not sure what hte proper way to do this is. -/
-structure Rule12Motion where
-  dateTime : NaiveDateTime
-  answer : Answer
-
-structure FileCounterclaim where
-  dateTime : NaiveDateTime
-  val : Bool
-
-@[reducible]
-def RuleTag.ctorArgType : RuleTag → Type
-| .fileComplaint => FileComplaint
-| .serveProcess => ServeProcess
-| .waiveService => WaiveService
-| .extendSummonsDeadline => ExtendSummonsDeadline
-| .dismissParty => DismissParty
-
-
-@[reducible]
-def StepRecord := Sigma RuleTag.ctorArgType
-
---PGM is the whole thing
---σ is (past steps × currentStateSummary), which is `History`.
-structure History where
-  /- Transactions already executed -/
-  priorSteps : List StepRecord
-  /- The current state -/
-  civilAction : CivilAction
-  sjmCheck : SjmCheck
-
-class Step (A : Type) where
-  dateTime (args : A) : NaiveDateTime
-  precondition (args : A) (history : History) : Prop
-  inst0 (args) (history) : Decidable (precondition args history)
-  takeStep (args : A) (history : History) (h : precondition args history) : CivilAction
-
-instance : Step FileComplaint where
-  dateTime := FileComplaint.filedOn
-  precondition (args) (history) := 
-    history.civilAction.status = .uninitiated 
-    ∧ args.complaint.venue ∈ properVenues (args.complaint.claims)
-  inst0 := inferInstance
-  takeStep (args) _ _ := 
-    {
-      dateTime := args.filedOn
-      status := .complaintFiled
-      venue := args.complaint.venue
-      complaint := { 
-        args.complaint with 
-        header := args.header
-        filedOn := args.filedOn 
-        h := args.h
-      }
-      claims := args.complaint.claims
-      parties := 
-        (args.complaint.plaintiffs ++ args.complaint.defendants).foldl 
-        (init := HashMap.empty) 
-        (fun sink next => sink.insert next { meansOfJoinder := .complaint, status := .notServed })
-      summonses := []
-      serviceWaiverResponses := []
-      upcomingDeadlines := []
-      isSpecialProceeding := false
-      removedByDefendant := false
-      motionsPending := []
-      motionsGranted := []
-      motionsDenied := []
-    }
-
-instance : Step ServeProcess where
-  dateTime := ServeProcess.dateTime
-  precondition (args) (history) := 
-    history.civilAction.status >= .complaintFiled
-  inst0 := inferInstance
-  takeStep args history h := sorry
-
-instance : Step ExtendSummonsDeadline where
-  dateTime := ExtendSummonsDeadline.dateTime
-  precondition (args) (history) :=  sorry
-  inst0 := sorry
-  takeStep (args) history h := sorry
-
-instance : Step DismissParty where
-  dateTime := DismissParty.dateTime
-  precondition (args) (history) :=
-    history.civilAction.status >= .complaintFiled
-  inst0 := inferInstance
-  takeStep (args) history h := 
-    {
-      history.civilAction with
-      parties := history.civilAction.parties.erase args.party
-      claims := 
-        history.civilAction.claims.filter 
-        (fun c => ¬(c.plaintiff = args.party ∨ c.plaintiff = args.party))
-    }
-
-instance : Step WaiveService where
-  dateTime := WaiveService.dateTime
-  precondition (args) (history) :=
-    history.civilAction.status >= .complaintFiled
-
-  inst0 := sorry
-  takeStep (args) history h := sorry
-
-instance {t : RuleTag} : Step (t.ctorArgType) := by cases t <;> exact inferInstance
-
-@[reducible]
-abbrev StepRecord.dateTime (r : StepRecord) : NaiveDateTime := Step.dateTime r.snd
-
-@[reducible]
-abbrev StepRecord.precondition (r : StepRecord) (hist : History) : Prop :=
-  Step.precondition r.snd hist ∧ hist.civilAction.dateTime <= r.dateTime
-
-instance (r : StepRecord) (hist : History) : Decidable (Step.precondition r.snd hist) :=
-  Step.inst0 r.snd hist
-
-instance (r : StepRecord) (hist : History) : Decidable (r.precondition hist) := by 
-  simp [StepRecord.precondition]; 
-  exact inferInstance
-
-
-@[reducible]
-def StepRecord.takeStep (r : StepRecord) (hist : History) (hPre : r.precondition hist) : History :=
-  {
-    hist with
-    priorSteps := r :: hist.priorSteps
-    civilAction := 
-      {
-        Step.takeStep r.snd hist hPre.left
-        with dateTime := r.dateTime
-      }
-  }
-  
-/-
-This would have to be like on a transaciton, defining its relation
-within a single txn.
--/
-@[reducible]
-def singleStepOperational (r : StepRecord) (hist hist' : History) : Prop :=
-  ∃ (hPre : r.precondition hist), hist' = r.takeStep hist hPre
-
-@[reducible]
-def singleStepBinary (hi hi' : History) : Prop :=
-  ∃ r, singleStepOperational r hi hi'
-
-@[reducible]
-def denote (r : StepRecord) : Set (History × History) :=
-  { pr | ∃ r, singleStepOperational r pr.fst pr.snd }
-
-@[reducible]
-def stepsOk : List StepRecord → History → History → Prop
-| [], hist, hist' => hist = hist'
-| r :: tl, hist, hist' => ∃ (hPre : r.precondition hist), stepsOk tl (r.takeStep hist hPre) hist'
-
-/- Not sure why this won't reduce. -/
-instance (rs : List StepRecord) (hi hi' : History) : Decidable (stepsOk rs hi hi') := by
-  simp [stepsOk]; sorry
-
-@[reducible]
-def rule4mAux (r : StepRecord) (d : Party) : Prop :=
-  match r with
-  | ⟨.dismissParty, args⟩ => args.party = d
-  | ⟨.extendSummonsDeadline, args⟩ => args.defendant = d
-  | ⟨.serveProcess, args⟩ => args.summons.servedParty = d
-  | ⟨.waiveService, args⟩ => args.waiver.servedParty = d
-  | _ => False
-
-instance (r : StepRecord) (p : Party)  : Decidable (rule4mAux r p) := by
-  simp [rule4mAux]; split <;> exact inferInstance
-
-/-
-The invariant imposed by rule 4(m); within 90 days of the complaint being
-filed, all defendants mentioned therein must be served (unless they need to be served
-in a manner required by service in a foreign country), dismissed, or the deadline extended.
-
-Rule 4(m)
-Three day mail doesn't apply to this since nobody's been served yet.
--/
-@[reducible]
-def History.rule4m (hist : History) : Prop :=
-  let deadline := 
-    @FrcpPeriod.mk 
-      hist.civilAction.venue 
-      (setOn := ⟨hist.civilAction.complaint.filedOn⟩)
-      (direction := .forward) 
-      (.days (numDays := 90) (isElectronicFiling := false) (lastDayEnds := .midnight))
-      (threeDayMail := false)
-  deadline.lapsedRelativeTo hist.civilAction.dateTime ∧ 
-    ∀ d ∈ hist.civilAction.complaint.defendants, d.foreignService ∨ ∃ r ∈ hist.priorSteps, rule4mAux r d
-
-@[reducible]
-def History.blanketPrecondition (hist : History) : Prop := 
-  /- subject matter jurisdiction OK -/
-  hist.sjmCheck.check hist.civilAction
-  ∧ hist.rule4m
-
-instance : DecidablePred History.blanketPrecondition := inferInstance
-
-inductive WfPred : History → Prop
-| mk
-  (steps : List StepRecord) 
-  (hist hist' : History)
-  (h0 : WfPred hist)
-  (h1 : stepsOk steps hist hist')
-  (h2 : hist'.blanketPrecondition)
-  : WfPred hist'
-
-def WfH := { hist : History // WfPred hist }
-
-@[reducible]
-def doSteps : List StepRecord → EStateM String History Unit
-| [] => pure ()
-| r :: tl => fun hist =>
-  if hPre : r.precondition hist
-  then 
-    doSteps tl (r.takeStep hist hPre)
-  else 
-    EStateM.Result.error "precondition not satisfied" hist
-
-/- doSteps won't reduce. -/
-theorem doStepsIff (rs : List StepRecord) (hist hist' : History) : 
-  ((doSteps rs).run hist = EStateM.Result.ok () hist') → stepsOk rs hist hist' := by
-  simp [doSteps, stepsOk]; sorry
-
-@[reducible]
-def doStepsWf : List StepRecord → EStateM String WfH Unit
-| rs, wf@⟨hist, property⟩ => 
-  match h0 : (doSteps rs).run hist with
-  | EStateM.Result.ok _ hist' => 
-    if h1 : hist'.blanketPrecondition
-    then 
-      have h2 := doStepsIff rs hist hist' h0
-      have out : WfH := ⟨hist', WfPred.mk rs hist hist' property h2 h1⟩
-      EStateM.Result.ok () out
-    else EStateM.Result.error "failed precondition" wf
-  | EStateM.Result.error e _ => EStateM.Result.error e wf
-
-def fileComplaintM (args : FileComplaint) : EStateM String WfH FiledComplaint := do
-  doStepsWf [⟨.fileComplaint, args⟩];
-  let hist' ← get
-  return hist'.val.civilAction.complaint
-
-
+def Store.reachable (s : Store) := ∃ s₀, s₀ ∈ validInitialStates ∧ @RTC Store EvalRBinary s₀ s

@@ -3,7 +3,6 @@ import UsCourts.Defs
 import UsCourts.Federal.Defs
 import Timelib.Date.Basic
 import Timelib.Date.ScalarDate
-import Timelib.NanoPrecision.DateTime.NaiveDateTime
 import Timelib.NanoPrecision.DateTime.DateTime
 import Timelib.NanoPrecision.Duration.SignedDuration
 import JohnDoe.Util
@@ -63,7 +62,7 @@ structure ServiceWaiverRequest where
   address : String
   email : String
   phone : String
-deriving Repr
+deriving DecidableEq, Repr
 
 def ServiceWaiverRequest.formNumber : String := "AO 398"
 
@@ -95,7 +94,7 @@ structure ServiceWaiverResponse where
   address : String
   email : String
   phone : String
-deriving Repr
+deriving DecidableEq, Repr
 
 def ServiceWaiverResponse.servedParty (r : ServiceWaiverResponse) : Party :=  r.request.servedParty
 
@@ -130,7 +129,7 @@ structure Summons where
   address : String
   email : String
   phone : String
-deriving Repr
+deriving DecidableEq, Repr
 
 def Summons.formNumber : String := "AO 440 (Rev. 06/12) Summons in a Civil Action"
 def Summons.defaultWarning := "If you fail to respond, judgment by default will be entered against you for the relief demanded in the complaint. You also must file your answer or motion with the court."
@@ -171,4 +170,9 @@ end Service
 --ant for the relief demanded in the complaint;
 --(F) be signed by the clerk; and
 --(G) bear the court’s seal.
+
+--inductive Service
+--| summons : Summons → Service
+--| waiver : ServiceWaiverResponse → Service
+--deriving DecidableEq, Repr
 
