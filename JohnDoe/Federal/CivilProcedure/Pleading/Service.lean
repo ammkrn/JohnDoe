@@ -43,14 +43,6 @@ inductive ServiceKind
 | condemnation -- AKA «71.1d3a» 
 deriving DecidableEq, Hashable, Repr
 
-@[reducible]
-def ServiceKind.exemptFrom90DayRule : ServiceKind → Prop 
-| f1 | f2A | f2B | f2Ci | f2Cii => True
-| h2 => True
-| j1 => True
-| condemnation => True
-| _ => False
-
 structure ServiceWaiverRequest where
   complaint : FiledComplaint
   /- Defendant (or recipient if different) -/
@@ -89,7 +81,7 @@ instance : ToString ServiceWaiverRequest where
 
 structure ServiceWaiverResponse where
   request : ServiceWaiverRequest
-  date : ScalarDate
+  dateTime : TaiDateTime
   defendantOrAttorneyName : String
   address : String
   email : String
@@ -102,25 +94,23 @@ def ServiceWaiverResponse.formNumber : String := "AO 399"
 
 instance : ToString ServiceWaiverResponse where
   toString response := 
-    s!"UNITED STATES DISTRICT COURT FOR THE {response.request.complaint.venue.fullName}\n"++
-    s!"Civil Action No. {response.request.complaint.caseNum}\n\n"++
-    s!"To: {response.request.complaint.namedPlaintiff.name}:\n" ++
-    s!"I have received your request to waive service of a summons in this action along with a copy of the complaint, two copies of this waiver form, and a prepaid means of returning one signed copy of the form to you.\n" ++
-    s!"I, or the entity I represent, agree to save the expense of serving a summons and complaint in this case.\n" ++
-    s!"I understand that I, or the entity I represent, will keep all defenses or objections to the lawsuit, the court’s jurisdiction, and the venue of the action, but that I waive any objections to the absence of a summons or of service.\n" ++
-    s!"I also understand that I, or the entity I represent, must file and serve an answer or a motion under Rule 12 within 60 days from {reprStr response.request.originationDate}, the date when this request was sent (or 90 days if it was sent outside the United States). If I fail to do so, a default judgment will be entered against me or the entity I represent.\n\n" ++
-    s!"Date: {reprStr response.date}\n" ++
-    s!"{response.defendantOrAttorneyName}\n" ++
-    s!"{response.address}\n" ++
-    s!"{response.email}\n" ++
-    s!"{response.phone}"
+    --s!"UNITED STATES DISTRICT COURT FOR THE {response.request.complaint.venue.fullName}\n"++
+    --s!"Civil Action No. {response.request.complaint.caseNum}\n\n"++
+    --s!"To: {response.request.complaint.namedPlaintiff.name}:\n" ++
+    --s!"I have received your request to waive service of a summons in this action along with a copy of the complaint, two copies of this waiver form, and a prepaid means of returning one signed copy of the form to you.\n" ++
+    --s!"I, or the entity I represent, agree to save the expense of serving a summons and complaint in this case.\n" ++
+    --s!"I understand that I, or the entity I represent, will keep all defenses or objections to the lawsuit, the court’s jurisdiction, and the venue of the action, but that I waive any objections to the absence of a summons or of service.\n" ++
+    --s!"I also understand that I, or the entity I represent, must file and serve an answer or a motion under Rule 12 within 60 days from {reprStr response.request.originationDate}, the date when this request was sent (or 90 days if it was sent outside the United States). If I fail to do so, a default judgment will be entered against me or the entity I represent.\n\n" ++
+    --s!"Date: {reprStr response.date}\n" ++
+    --s!"{response.defendantOrAttorneyName}\n" ++
+    --s!"{response.address}\n" ++
+    --s!"{response.email}\n" ++
+    --s!"{response.phone}"
+      sorry
 
-inductive ServiceTimeLimit
-| standard : ServiceTimeLimit
-| serviceInForeignCountry : ServiceTimeLimit
-| condemnation : ServiceTimeLimit
 
 structure Summons where
+  dateTime : TaiDateTime
   complaint : FiledComplaint
   servedParty : Party
   --defendant : PartyInfo
@@ -134,9 +124,23 @@ deriving DecidableEq, Repr
 def Summons.formNumber : String := "AO 440 (Rev. 06/12) Summons in a Civil Action"
 def Summons.defaultWarning := "If you fail to respond, judgment by default will be entered against you for the relief demanded in the complaint. You also must file your answer or motion with the court."
 
+inductive SummonsOrWaiver
+| summons : Summons → SummonsOrWaiver
+| waiver : ServiceWaiverResponse → SummonsOrWaiver
+
+@[reducible]
+def SummonsOrWaiver.servedParty : SummonsOrWaiver → Party
+| summons s => s.servedParty
+| waiver w => w.servedParty
+
+@[reducible]
+def SummonsOrWaiver.date : SummonsOrWaiver → TaiDateTime
+| summons s => s.dateTime
+| waiver w => w.dateTime
+
+
 instance : ToString Summons where
   toString summons := 
-    sorry
     --s!"UNITED STATES DISTRICT COURT FOR THE {summons.complaint.district.fullName}\n"++
     --s!"Civil Action No. {summons.complaint.caseNum}\n\n"++
     --s!"{summons.complaint.plaintiffs} v. {summons.complaint.defendants}" ++
@@ -153,26 +157,7 @@ instance : ToString Summons where
     --s!"{response.address}\n" ++
     --s!"{response.email}\n" ++
     --s!"{response.phone}"
+    sorry
 
 end Service
-
---Rule 4. Summons
---(a) CONTENTS; AMENDMENTS.
---(1) Contents. A summons must:
---(A) name the court and the parties;
---(B) be directed to the defendant;
---(C) state the name and address of the plaintiff’s attorney
---or—if unrepresented—of the plaintiff;
---(D) state the time within which the defendant must ap-
---pear and defend;
---(E) notify the defendant that a failure to appear and de-
---fend will result in a default judgment against the defend-
---ant for the relief demanded in the complaint;
---(F) be signed by the clerk; and
---(G) bear the court’s seal.
-
---inductive Service
---| summons : Summons → Service
---| waiver : ServiceWaiverResponse → Service
---deriving DecidableEq, Repr
 
